@@ -11,16 +11,15 @@
 
 use core::cell::RefCell;
 
-use rand_core::{RngCore,CryptoRng};
+use rand_core::{RngCore, CryptoRng};
 
 use merlin::Transcript;
 
-use curve25519_dalek::digest::{Update,FixedOutput,ExtendableOutput,XofReader};
-use curve25519_dalek::digest::generic_array::typenum::{U32,U64};
+use curve25519_dalek::digest::{Update, FixedOutput, ExtendableOutput, XofReader};
+use curve25519_dalek::digest::consts::{U32, U64};
 
 use curve25519_dalek::ristretto::CompressedRistretto; // RistrettoPoint
 use curve25519_dalek::scalar::Scalar;
-
 
 // === Signing context as transcript === //
 
@@ -35,7 +34,7 @@ use curve25519_dalek::scalar::Scalar;
 /// abstract enough to support conventional hash functions as well.
 ///
 /// We warn however that conventional hash functions do not provide
-/// strong enough domain seperation for usage via `&mut` references.
+/// strong enough domain separation for usage via `&mut` references.
 ///
 /// We fold randomness into witness generation here too, which
 /// gives every function that takes a `SigningTranscript` a default
@@ -56,22 +55,6 @@ pub trait SigningTranscript {
     fn commit_point(&mut self, label: &'static [u8], compressed: &CompressedRistretto) {
         self.commit_bytes(label, compressed.as_bytes());
     }
-
-    /*
-    fn commit_sorted_points<P,S>(&mut self, label: &'static [u8], set: &mut [P])
-    where P: Borrow<CompressedRistretto>,
-          // S: BorrowMut<[P]>,
-    {
-        // let set = set.borrow_mut();
-        set.sort_unstable_by(
-            |a,b| a.borrow().as_bytes()
-             .cmp(b.borrow().as_bytes())
-        );
-        for p in set.iter() {
-            self.commit_point(label,p.borrow());
-        }
-    }
-    */
 
     /// Produce some challenge bytes, shadowed by `merlin::Transcript`.
     fn challenge_bytes(&mut self, label: &'static [u8], dest: &mut [u8]);
@@ -94,19 +77,25 @@ pub trait SigningTranscript {
     /// Produce secret witness bytes from the protocol transcript
     /// and any "nonce seeds" kept with the secret keys.
     fn witness_bytes(&self, label: &'static [u8], dest: &mut [u8], nonce_seeds: &[&[u8]]) {
-        self.witness_bytes_rng(label, dest, nonce_seeds, super::rand_hack())
+        self.witness_bytes_rng(label, dest, nonce_seeds, super::getrandom_or_panic())
     }
 
     /// Produce secret witness bytes from the protocol transcript
     /// and any "nonce seeds" kept with the secret keys.
-    fn witness_bytes_rng<R>(&self, label: &'static [u8], dest: &mut [u8], nonce_seeds: &[&[u8]], rng: R)
-    where R: RngCore+CryptoRng;
+    fn witness_bytes_rng<R>(
+        &self,
+        label: &'static [u8],
+        dest: &mut [u8],
+        nonce_seeds: &[&[u8]],
+        rng: R,
+    ) where
+        R: RngCore + CryptoRng;
 }
-
 
 /// We delegates any mutable reference to its base type, like `&mut Rng`
 /// or similar to `BorrowMut<..>` do, but doing so here simplifies
 /// alternative implementations.
+#[rustfmt::skip]
 impl<T> SigningTranscript for &mut T
 where T: SigningTranscript + ?Sized,
 {
@@ -150,8 +139,14 @@ impl SigningTranscript for Transcript {
         Transcript::challenge_bytes(self, label, dest)
     }
 
-    fn witness_bytes_rng<R>(&self, label: &'static [u8], dest: &mut [u8], nonce_seeds: &[&[u8]], mut rng: R)
-    where R: RngCore+CryptoRng
+    fn witness_bytes_rng<R>(
+        &self,
+        label: &'static [u8],
+        dest: &mut [u8],
+        nonce_seeds: &[&[u8]],
+        mut rng: R,
+    ) where
+        R: RngCore + CryptoRng,
     {
         let mut br = self.build_rng();
         for ns in nonce_seeds {
@@ -162,10 +157,9 @@ impl SigningTranscript for Transcript {
     }
 }
 
-
 /// Schnorr signing context
 ///
-/// We expect users to have seperate `SigningContext`s for each role
+/// We expect users to have separate `SigningContext`s for each role
 /// that signature play in their protocol.  These `SigningContext`s
 /// may be global `lazy_static!`s, or perhaps constants in future.
 ///
@@ -173,11 +167,11 @@ impl SigningTranscript for Transcript {
 /// a signature transcript.
 ///
 /// You should use `merlin::Transcript`s directly if you must do
-/// anything more complex, like use signatures in larger zero-knoweldge
+/// anything more complex, like use signatures in larger zero-knowledge
 /// protocols or sign several components but only reveal one later.
 ///
 /// We declare these methods `#[inline(always)]` because rustc does
-/// not handle large returns as efficently as one might like.
+/// not handle large returns as efficiently as one might like.
 /// https://github.com/rust-random/rand/issues/817
 #[derive(Clone)] // Debug
 pub struct SigningContext(Transcript);
@@ -185,7 +179,7 @@ pub struct SigningContext(Transcript);
 /// Initialize a signing context from a static byte string that
 /// identifies the signature's role in the larger protocol.
 #[inline(always)]
-pub fn signing_context(context : &[u8]) -> SigningContext {
+pub fn signing_context(context: &[u8]) -> SigningContext {
     SigningContext::new(context)
 }
 
@@ -193,17 +187,17 @@ impl SigningContext {
     /// Initialize a signing context from a static byte string that
     /// identifies the signature's role in the larger protocol.
     #[inline(always)]
-    pub fn new(context : &[u8]) -> SigningContext {
+    pub fn new(context: &[u8]) -> SigningContext {
         let mut t = Transcript::new(b"SigningContext");
-        t.append_message(b"",context);
+        t.append_message(b"", context);
         SigningContext(t)
     }
 
-    /// Initalize an owned signing transcript on a message provided as a byte array.
+    /// Initialize an owned signing transcript on a message provided as a byte array.
     ///
     /// Avoid this method when processing large slices because it
     /// calls `merlin::Transcript::append_message` directly and
-    /// `merlin` is designed for domain seperation, not performance.
+    /// `merlin` is designed for domain separation, not performance.
     #[inline(always)]
     pub fn bytes(&self, bytes: &[u8]) -> Transcript {
         let mut t = self.0.clone();
@@ -211,7 +205,7 @@ impl SigningContext {
         t
     }
 
-    /// Initalize an owned signing transcript on a message provided
+    /// Initialize an owned signing transcript on a message provided
     /// as a hash function with extensible output mode (XOF) by
     /// finalizing the hash and extracting 32 bytes from XOF.
     #[inline(always)]
@@ -223,10 +217,10 @@ impl SigningContext {
         t
     }
 
-    /// Initalize an owned signing transcript on a message provided as
+    /// Initialize an owned signing transcript on a message provided as
     /// a hash function with 256 bit output.
     #[inline(always)]
-    pub fn hash256<D: FixedOutput<OutputSize=U32>>(&self, h: D) -> Transcript {
+    pub fn hash256<D: FixedOutput<OutputSize = U32>>(&self, h: D) -> Transcript {
         let mut prehash = [0u8; 32];
         prehash.copy_from_slice(h.finalize_fixed().as_slice());
         let mut t = self.0.clone();
@@ -234,20 +228,19 @@ impl SigningContext {
         t
     }
 
-    /// Initalize an owned signing transcript on a message provided as
+    /// Initialize an owned signing transcript on a message provided as
     /// a hash function with 512 bit output, usually a gross over kill.
     #[inline(always)]
-    pub fn hash512<D: FixedOutput<OutputSize=U64>>(&self, h: D) -> Transcript {
+    pub fn hash512<D: FixedOutput<OutputSize = U64>>(&self, h: D) -> Transcript {
         let mut prehash = [0u8; 64];
         prehash.copy_from_slice(h.finalize_fixed().as_slice());
         let mut t = self.0.clone();
-        t.append_message(b"sign-256", &prehash);
+        t.append_message(b"sign-512", &prehash);
         t
     }
 }
 
-
-/// Very simple transcript construction from a modern hash fucntion.
+/// Very simple transcript construction from a modern hash function.
 ///
 /// We provide this transcript type to directly use conventional hash
 /// functions with an extensible output mode, like Shake128 and
@@ -255,7 +248,7 @@ impl SigningContext {
 ///
 /// We recommend using `merlin::Transcript` instead because merlin
 /// provides the transcript abstraction natively and might function
-/// better in low memory enviroments.  We therefore do not provide
+/// better in low memory environments.  We therefore do not provide
 /// conveniences like `signing_context` for this.
 ///
 /// We note that merlin already uses Keccak, upon which Shake128 is based,
@@ -273,16 +266,18 @@ impl SigningContext {
 /// domain separation provided by our methods.  We do this to make
 /// `&mut XoFTranscript : SigningTranscript` safe.
 pub struct XoFTranscript<H>(H)
-where H: Update + ExtendableOutput + Clone;
+where
+    H: Update + ExtendableOutput + Clone;
 
 fn input_bytes<H: Update>(h: &mut H, bytes: &[u8]) {
     let l = bytes.len() as u64;
-    h.update(l.to_le_bytes());
+    h.update(&l.to_le_bytes());
     h.update(bytes);
 }
 
 impl<H> XoFTranscript<H>
-where H: Update + ExtendableOutput + Clone
+where
+    H: Update + ExtendableOutput + Clone,
 {
     /// Create a `XoFTranscript` from a conventional hash functions with an extensible output mode.
     ///
@@ -290,18 +285,24 @@ where H: Update + ExtendableOutput + Clone
     /// provided, so that our domain separation works correctly even
     /// when using `&mut XoFTranscript : SigningTranscript`.
     #[inline(always)]
-    pub fn new(h: H) -> XoFTranscript<H> { XoFTranscript(h) }
+    pub fn new(h: H) -> XoFTranscript<H> {
+        XoFTranscript(h)
+    }
 }
 
 impl<H> From<H> for XoFTranscript<H>
-where H: Update + ExtendableOutput + Clone
+where
+    H: Update + ExtendableOutput + Clone,
 {
     #[inline(always)]
-    fn from(h: H) -> XoFTranscript<H> { XoFTranscript(h) }
+    fn from(h: H) -> XoFTranscript<H> {
+        XoFTranscript(h)
+    }
 }
 
 impl<H> SigningTranscript for XoFTranscript<H>
-where H: Update + ExtendableOutput + Clone
+where
+    H: Update + ExtendableOutput + Clone,
 {
     fn commit_bytes(&mut self, label: &'static [u8], bytes: &[u8]) {
         self.0.update(b"co");
@@ -313,12 +314,18 @@ where H: Update + ExtendableOutput + Clone
         self.0.update(b"ch");
         input_bytes(&mut self.0, label);
         let l = dest.len() as u64;
-        self.0.update(l.to_le_bytes());
+        self.0.update(&l.to_le_bytes());
         self.0.clone().chain(b"xof").finalize_xof().read(dest);
     }
 
-    fn witness_bytes_rng<R>(&self, label: &'static [u8], dest: &mut [u8], nonce_seeds: &[&[u8]], mut rng: R)
-    where R: RngCore+CryptoRng
+    fn witness_bytes_rng<R>(
+        &self,
+        label: &'static [u8],
+        dest: &mut [u8],
+        nonce_seeds: &[&[u8]],
+        mut rng: R,
+    ) where
+        R: RngCore + CryptoRng,
     {
         let mut h = self.0.clone().chain(b"wb");
         input_bytes(&mut h, label);
@@ -326,7 +333,7 @@ where H: Update + ExtendableOutput + Clone
             input_bytes(&mut h, ns);
         }
         let l = dest.len() as u64;
-        h.update(l.to_le_bytes());
+        h.update(&l.to_le_bytes());
 
         let mut r = [0u8; 32];
         rng.fill_bytes(&mut r);
@@ -334,7 +341,6 @@ where H: Update + ExtendableOutput + Clone
         h.finalize_xof().read(dest);
     }
 }
-
 
 /// Schnorr signing transcript with the default `ThreadRng` replaced
 /// by an arbitrary `CryptoRng`.
@@ -350,13 +356,16 @@ where H: Update + ExtendableOutput + Clone
 /// produces secure signatures, we recommend against doing this in
 /// production because we implement protocols like multi-signatures
 /// which likely become vulnerable when derandomized.
-pub struct SigningTranscriptWithRng<T,R>
-where T: SigningTranscript, R: RngCore+CryptoRng
+pub struct SigningTranscriptWithRng<T, R>
+where
+    T: SigningTranscript,
+    R: RngCore + CryptoRng,
 {
     t: T,
     rng: RefCell<R>,
 }
 
+#[rustfmt::skip]
 impl<T,R> SigningTranscript for SigningTranscriptWithRng<T,R>
 where T: SigningTranscript, R: RngCore+CryptoRng
 {
@@ -382,12 +391,12 @@ where T: SigningTranscript, R: RngCore+CryptoRng
 /// however because, although such derandomization produces secure Schnorr
 /// signatures, we do implement protocols here like multi-signatures which
 /// likely become vulnerable when derandomized.
-pub fn attach_rng<T,R>(t: T, rng: R) -> SigningTranscriptWithRng<T,R>
-where T: SigningTranscript, R: RngCore+CryptoRng
+pub fn attach_rng<T, R>(t: T, rng: R) -> SigningTranscriptWithRng<T, R>
+where
+    T: SigningTranscript,
+    R: RngCore + CryptoRng,
 {
-    SigningTranscriptWithRng {
-        t, rng: RefCell::new(rng)
-    }
+    SigningTranscriptWithRng { t, rng: RefCell::new(rng) }
 }
 
 #[cfg(feature = "rand_chacha")]
@@ -395,20 +404,10 @@ use rand_chacha::ChaChaRng;
 
 /// Attach a `ChaChaRng` to a `Transcript` to repalce the default `ThreadRng`
 #[cfg(feature = "rand_chacha")]
-pub fn attach_chacharng<T>(t: T, seed: [u8; 32]) -> SigningTranscriptWithRng<T,ChaChaRng>
-where T: SigningTranscript
+pub fn attach_chacharng<T>(t: T, seed: [u8; 32]) -> SigningTranscriptWithRng<T, ChaChaRng>
+where
+    T: SigningTranscript,
 {
     use rand_core::SeedableRng;
-    attach_rng(t,ChaChaRng::from_seed(seed))
+    attach_rng(t, ChaChaRng::from_seed(seed))
 }
-
-
-
-/*
-#[cfg(test)]
-mod test {
-    use sha3::Shake128;
-    use curve25519_dalek::digest::{Update};
-
-}
-*/

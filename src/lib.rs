@@ -42,6 +42,7 @@
 //! # let keypair: Keypair = Keypair::generate_with(&mut csprng);
 //! let context = signing_context(b"this signature does this thing");
 //! let message: &[u8] = "This is a test of the tsunami alert system.".as_bytes();
+//! # #[cfg(feature = "getrandom")]
 //! let signature: Signature = keypair.sign(context.bytes(message));
 //! # }
 //! ```
@@ -58,7 +59,9 @@
 //! # let keypair: Keypair = Keypair::generate_with(&mut csprng);
 //! # let context = signing_context(b"this signature does this thing");
 //! # let message: &[u8] = "This is a test of the tsunami alert system.".as_bytes();
+//! # #[cfg(feature = "getrandom")]
 //! # let signature: Signature = keypair.sign(context.bytes(message));
+//! # #[cfg(feature = "getrandom")]
 //! assert!(keypair.verify(context.bytes(message), &signature).is_ok());
 //! # }
 //! ```
@@ -76,8 +79,10 @@
 //! # let keypair: Keypair = Keypair::generate_with(&mut csprng);
 //! # let context = signing_context(b"this signature does this thing");
 //! # let message: &[u8] = "This is a test of the tsunami alert system.".as_bytes();
+//! # #[cfg(feature = "getrandom")]
 //! # let signature: Signature = keypair.sign(context.bytes(message));
 //! let public_key: PublicKey = keypair.public;
+//! # #[cfg(feature = "getrandom")]
 //! assert!(public_key.verify(context.bytes(message), &signature).is_ok());
 //! # }
 //! ```
@@ -85,12 +90,13 @@
 //! ## Serialisation
 //!
 //! `PublicKey`s, `MiniSecretKey`s, `Keypair`s, and `Signature`s can be serialised
-//! into byte-arrays by calling `.to_bytes()`.  It's perfectly acceptible and
+//! into byte-arrays by calling `.to_bytes()`.  It's perfectly acceptable and
 //! safe to transfer and/or store those bytes.  (Of course, never transfer your
 //! secret key to anyone else, since they will only need the public key to
 //! verify your signatures!)
 //!
 //! ```
+//! # #[cfg(feature = "getrandom")]
 //! # fn main() {
 //! # use rand::{Rng, SeedableRng};
 //! # use rand_chacha::ChaChaRng;
@@ -108,6 +114,8 @@
 //! let keypair_bytes:    [u8; KEYPAIR_LENGTH]    = keypair.to_bytes();
 //! let signature_bytes:  [u8; SIGNATURE_LENGTH]  = signature.to_bytes();
 //! # }
+//! # #[cfg(not(feature = "getrandom"))]
+//! # fn main() { }
 //! ```
 //!
 //! And similarly, decoded from bytes with `::from_bytes()`:
@@ -117,6 +125,7 @@
 //! # use rand_chacha::ChaChaRng;
 //! # use schnorrkel::{SecretKey, Keypair, Signature, PublicKey, SignatureError, signing_context};
 //! # use schnorrkel::{PUBLIC_KEY_LENGTH, SECRET_KEY_LENGTH, KEYPAIR_LENGTH, SIGNATURE_LENGTH};
+//! # #[cfg(feature = "getrandom")]
 //! # fn do_test() -> Result<(SecretKey, PublicKey, Keypair, Signature), SignatureError> {
 //! # let mut csprng: ChaChaRng = ChaChaRng::from_seed([0u8; 32]);
 //! # let keypair_orig: Keypair = Keypair::generate_with(&mut csprng);
@@ -136,6 +145,7 @@
 //! # Ok((secret_key, public_key, keypair, signature))
 //! # }
 //! # fn main() {
+//! #     #[cfg(feature = "getrandom")]
 //! #     do_test();
 //! # }
 //! ```
@@ -212,47 +222,17 @@
 #![warn(rust_2018_compatibility)]
 #![warn(rust_2018_idioms)]
 #![deny(missing_docs)] // refuse to compile if documentation is missing
+#![allow(clippy::needless_lifetimes)]
 
-#[cfg(any(feature = "std"))]
+#[cfg(feature = "std")]
 #[macro_use]
 extern crate std;
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
-use rand_core::{RngCore,CryptoRng};
-
-// Removed rand dependency because naming the same feature std_rng on rand
-// and getrandom on rand_code is too confusing to propogate correctly. 
-// Use transcript.attach_rng(::rand::thread_rng()) when signing if you
-// application suffers from this performance regression.
-
-// #[cfg(all(feature = "getrandom", feature = "rand"))] 
-// fn rand_hack() -> impl RngCore+CryptoRng {
-//     rand::thread_rng()
-//  }
- 
-// #[cfg(all(feature = "getrandom", not(feature = "rand")))] 
-#[cfg(feature = "getrandom")] 
-fn rand_hack() -> impl RngCore+CryptoRng {
-    rand_core::OsRng
-}
-
-#[cfg(not(feature = "getrandom"))]
-fn rand_hack() -> impl RngCore+CryptoRng {
-    const PRM: &'static str = "Attempted to use functionality that requires system randomness!!";
-
-    struct PanicRng;
-    impl rand_core::RngCore for PanicRng {
-        fn next_u32(&mut self) -> u32 {  panic!("{}", PRM)  }
-        fn next_u64(&mut self) -> u64 {  panic!("{}", PRM)  }
-        fn fill_bytes(&mut self, _dest: &mut [u8]) {  panic!("{}", PRM)  }
-        fn try_fill_bytes(&mut self, _dest: &mut [u8]) -> Result<(), rand_core::Error> {  panic!("{}", PRM)  }
-    }
-    impl rand_core::CryptoRng for PanicRng {}
-
-    PanicRng
-}
+use getrandom_or_panic::{RngCore, CryptoRng, getrandom_or_panic};
+use curve25519_dalek::scalar::Scalar;
 
 #[macro_use]
 mod serdey;
@@ -268,20 +248,36 @@ pub mod derive;
 pub mod cert;
 pub mod errors;
 
-#[cfg(feature = "aead")]
+#[cfg(all(feature = "aead", feature = "getrandom"))]
 pub mod aead;
 
-#[cfg(any(feature = "alloc", feature = "std"))]
+#[cfg(feature = "alloc")]
 mod batch;
 
-// Not safe because need randomness  #[cfg(any(feature = "alloc", feature = "std"))]
+// Not safe because need randomness
+
+#[cfg_attr(
+    not(test),
+    deprecated(since = "0.11.0", note = "This module will be replaced in the future")
+)]
 #[cfg(feature = "std")]
 pub mod musig;
 
 pub use crate::keys::*; // {MiniSecretKey,SecretKey,PublicKey,Keypair,ExpansionMode}; + *_LENGTH
 pub use crate::context::{signing_context}; // SigningContext,SigningTranscript
-pub use crate::sign::{Signature,SIGNATURE_LENGTH};
-pub use crate::errors::{SignatureError,SignatureResult};
+pub use crate::sign::{Signature, SIGNATURE_LENGTH};
+pub use crate::errors::{SignatureError, SignatureResult};
 
-#[cfg(any(feature = "alloc", feature = "std"))]
-pub use crate::batch::{verify_batch,verify_batch_rng,verify_batch_deterministic,PreparedBatch};
+#[cfg(feature = "alloc")]
+pub use crate::batch::{verify_batch, verify_batch_rng, verify_batch_deterministic, PreparedBatch};
+
+pub(crate) fn scalar_from_canonical_bytes(bytes: [u8; 32]) -> Option<Scalar> {
+    let key = Scalar::from_canonical_bytes(bytes);
+
+    // Note: this is a `CtOption` so we have to do this to extract the value.
+    if bool::from(key.is_none()) {
+        return None;
+    }
+
+    Some(key.unwrap())
+}

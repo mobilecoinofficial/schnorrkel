@@ -17,8 +17,7 @@
 use core::fmt;
 use core::fmt::Display;
 
-
-/// `Result` specilized to this crate for convenience.
+/// `Result` specialized to this crate for convenience.
 pub type SignatureResult<T> = Result<T, SignatureError>;
 
 /// Three-round trip multi-signature stage identifies used in error reporting
@@ -46,7 +45,7 @@ impl Display for MultiSignatureStage {
 /// Errors which may occur while processing signatures and keypairs.
 ///
 /// All these errors represent a failed signature when they occur in
-/// the context of verifying a sitgnature, including in deserializaing
+/// the context of verifying a signature, including in deserializaing
 /// for verification.  We expose the distinction among them primarily
 /// for debugging purposes.
 ///
@@ -75,6 +74,8 @@ pub enum SignatureError {
     PointDecompressionError,
     /// Invalid scalar provided, usually to `Signature::from_bytes`.
     ScalarFormatError,
+    /// The provided key is not valid.
+    InvalidKey,
     /// An error in the length of bytes handed to a constructor.
     ///
     /// To use this, pass a string specifying the `name` of the type
@@ -86,45 +87,31 @@ pub enum SignatureError {
         /// Describes the type returning the error
         description: &'static str,
         /// Length expected by the constructor in bytes
-        length: usize
+        length: usize,
     },
     /// Signature not marked as schnorrkel, maybe try ed25519 instead.
     NotMarkedSchnorrkel,
-    /// There is no record of the preceeding multi-signautre protocol
+    /// There is no record of the preceding multi-signautre protocol
     /// stage for the specified public key.
     MuSigAbsent {
         /// Identifies the multi-signature protocol stage during which
-        /// the error occured.
+        /// the error occurred.
         musig_stage: MultiSignatureStage,
     },
     /// For this public key, there are either conflicting records for
-    /// the preceeding multi-signautre protocol stage or else duplicate
+    /// the preceding multi-signautre protocol stage or else duplicate
     /// duplicate records for the current stage.
     MuSigInconsistent {
         /// Identifies the multi-signature protocol stage during which
-        /// the error occured.
+        /// the error occurred.
         musig_stage: MultiSignatureStage,
         /// Set true if the stage was reached correctly once but this
         /// duplicate disagrees.
         duplicate: bool,
     },
-
-    // /// Reveal did not match commitment
-    // InvalidReveal,
-// other multisig errors
-// AbsentCommitment
-// InvalidCommitment
 }
 
-/*
-impl SignatureError {
-    #[inline(always)]
-    fn equation(b: bool) -> SignatureResult<()> {
-        if b { Ok(()) } else { Err(SignatureError::EquationFalse) }
-    }
-}
-*/
-
+#[rustfmt::skip]
 impl Display for SignatureError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use self::SignatureError::*;
@@ -135,17 +122,19 @@ impl Display for SignatureError {
                 write!(f, "Cannot decompress Ristretto point"),
             ScalarFormatError =>
                 write!(f, "Cannot use scalar with high-bit set"),
+            InvalidKey =>
+                write!(f, "The provided key is not valid"),
             BytesLengthError { name, length, .. } =>
-                write!(f, "{} must be {} bytes in length", name, length),
-            NotMarkedSchnorrkel => 
+                write!(f, "{name} must be {length} bytes in length"),
+            NotMarkedSchnorrkel =>
                 write!(f, "Signature bytes not marked as a schnorrkel signature"),
             MuSigAbsent { musig_stage, } =>
-                write!(f, "Absent {} violated multi-signature protocol", musig_stage),
+                write!(f, "Absent {musig_stage} violated multi-signature protocol"),
             MuSigInconsistent { musig_stage, duplicate, } =>
                 if duplicate {
-                    write!(f, "Inconsistent duplicate {} in multi-signature", musig_stage)
+                    write!(f, "Inconsistent duplicate {musig_stage} in multi-signature")
                 } else {
-                    write!(f, "Inconsistent {} violated multi-signature protocol", musig_stage)
+                    write!(f, "Inconsistent {musig_stage} violated multi-signature protocol")
                 },
         }
     }
@@ -160,19 +149,8 @@ impl failure::Fail for SignatureError {}
 /// `impl From<SignatureError> for E where E: serde::de::Error`.
 #[cfg(feature = "serde")]
 pub fn serde_error_from_signature_error<E>(err: SignatureError) -> E
-where E: serde_crate::de::Error
+where
+    E: serde_crate::de::Error,
 {
-    use self::SignatureError::*;
-    match err {
-        PointDecompressionError
-            => E::custom("Ristretto point decompression failed"),
-        ScalarFormatError
-            => E::custom("improper scalar has high-bit set"),  // TODO ed25519 v high 3 bits?
-        BytesLengthError{ description, length, .. }
-            => E::invalid_length(length, &description),
-        NotMarkedSchnorrkel
-            => E::custom("Signature bytes not marked as a schnorrkel signature"),
-        _ => panic!("Non-serialisation error encountered by serde!"),
-    }
+    E::custom(err)
 }
-
